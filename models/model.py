@@ -70,7 +70,7 @@ class finetune_Model2:
         dis3 = torch.norm(extract_in - extract_out)
         
         dis = dis1 + dis2 - dis3
-        L = dis + loss 
+        L = (dis + loss)/len(texts) 
         
         del extract_out, extract_in
         torch.cuda.empty_cache()
@@ -321,7 +321,7 @@ class finetune_Model:
         del input_ids, extract_out, extract_in, probs_labels
         torch.cuda.empty_cache()
         print(loss.item(), dis.item())
-        return dis + loss
+        return (dis + loss)/len(texts)
     
     def eval(self, texts):
         self.model.eval()
