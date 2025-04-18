@@ -74,32 +74,29 @@ def train_eval(train_dataloader, eval_dataloader, model, optimizer, epoch, logge
         logger.info('epoch: {0:02d}, batch: {1:03d}, loss: {2:.4f}'.format(epoch+1, i, loss))
     logger.info('##TRAIN## epoch: {0:02d}, avg_loss: {1:.4f}'.format(epoch+1, all_loss/i))
 
-    avg_acc = eval(eval_dataloader, model, epoch, logger,'VAL')
-    return avg_acc
+    avg_f1 = eval(eval_dataloader, model, epoch, logger,'VAL')
+    return avg_f1
 
 def eval(dataloader, model, epoch, logger, type='VAL'):
     model.model.eval()
     with torch.no_grad():
         i = 0
-        A = 0
-        F = 0
-        R = 0
-        P = 0
+        all_preds = []
+        all_labels = []
         for d in tqdm(dataloader,desc="{0}/EPOCH{1:02d}".format(type, epoch+1)):
             i += 1
             texts = d['texts']
             labels = d['labels']
             choices = d['choices']
             
-            acc, f1, recall, precision = model.eval(texts, labels, choices)
-            A += acc
-            F += f1
-            R += recall
-            P += precision
-            print(A/i, F/i)
-
-        logger.info('##{0}## epoch: {1:02d}, avg_acc: {2:.4f}, avg_f1: {3:.4f}, avg_recall: {4:.4f}, avg_precision: {5:.4f}'.format(type, epoch+1, A/i, F/i, R/i, P/i))
-        return A/i
+            true, p = model.eval(texts, labels, choices)
+            all_preds.extend(p.cpu().tolist())
+            all_labels.extend(true.cpu().tolist())
+        f1 = f1_score(all_labels, all_preds,average='weighted')
+        recall = recall_score(all_labels, all_preds,average='weighted')
+        print('##{0}## epoch: {1:02d}, f1: {2:.4f}, recall: {3:.4f}, precision: {4:.4f}'.format(type, epoch+1, f1, recall, precision))  
+        logger.info('##{0}## epoch: {1:02d}, f1: {2:.4f}, recall: {3:.4f}, precision: {4:.4f}'.format(type, epoch+1, f1, recall, precision))
+        return f1
 
 # 固定随机种子函数
 def set_seed(seed):
@@ -131,7 +128,7 @@ if __name__ == "__main__":
     model = finetune_Model2(args)
     mark_only_bias_as_trainable(model.model, args)
     
-    optimizer = torch.optim.Adam(model.model.parameters(),lr=args.lr, weight_decay=args.weight_decay)
+    optimizer = torch.optim.AdamW(model.model.parameters(),lr=args.lr, weight_decay=args.weight_decay)
     
     train_dataset = Generate_Dataset(args.train_data_path)
     test_dataset = Generate_Dataset(args.test_data_path)
