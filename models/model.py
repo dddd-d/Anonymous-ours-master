@@ -13,7 +13,6 @@ class finetune_Model2:
         self.pre_train_model = config.pre_train_model
         self.tokenizer = AutoTokenizer.from_pretrained(self.pre_train_model)
         self.model = AutoModelForCausalLM.from_pretrained(self.pre_train_model,device_map='auto', torch_dtype=torch.bfloat16, attn_implementation='eager')
-        self.loss_fn = nn.CrossEntropyLoss()
         self.model_config = self.model.config
         self.add_bias_layer_idx = config.add_bias_layer_idx
         self.bias_list = self.add_bias(self.add_bias_layer_idx)
@@ -36,8 +35,6 @@ class finetune_Model2:
 
             new_labels.append(labels_idx[name])
 
-        w = torch.tensor(list(labels_count.values()), dtype=float)  
-        w = F.softmax(w, dim=-1).to(self.config.device)
         labels_list = list(labels_count.keys())
         
         probs, loss = self.get_probs(texts, labels_list, new_labels)
@@ -77,52 +74,6 @@ class finetune_Model2:
         
         return L
 
-    def forward_all(self, texts, labels, choices):
-        loss = 0
-        for k in range(len(texts)):
-            text = texts[k].replace('{choice}', ' '+choices[k][str(labels[k].item())])
-            input_ids = self.tokenizer(text, return_tensors="pt").input_ids.to(self.config.device)
-            outputs = self.model(input_ids = input_ids, labels = input_ids) #labels = input_ids
-            loss += outputs.loss
-        torch.cuda.empty_cache()      
-        
-        return loss
-        
-    def batch_macro_metric(self, true_labels, pred_labels, num_classes):
-        """
-        计算 batch 的宏观 F1 分数，忽略在真实标签和预测标签中均未出现的类别。
-        """
-        # 用于存储活跃类别的 F1 值
-        f1_scores = []
-        recall_scores = []
-        precision_scores = []
-        
-        # 逐类别计算 F1 分数
-        for i in range(num_classes):
-            true_class = true_labels[:, i].cpu().numpy()
-            pred_class = pred_labels[:, i].cpu().numpy()
-            
-            # 仅当该类别在真实中出现时计算 F1
-            if true_class.sum() > 0:
-                f1 = f1_score(true_class, pred_class)
-                recall = recall_score(true_class, pred_class)
-                precision = precision_score(true_class, pred_class)
-                f1_scores.append(f1)
-                recall_scores.append(recall)
-                precision_scores.append(precision)
-        
-        # 将活跃类别的 F1 分数取平均，计算宏观 F1
-        if f1_scores:
-            macro_f1 = sum(f1_scores) / len(f1_scores)
-            macro_recall = sum(recall_scores) / len(recall_scores)
-            macro_precision = sum(precision_scores) / len(precision_scores)
-        else:
-            macro_f1 = 0.0  # 如果没有活跃类别，默认为 0
-            macro_recall = 0.0 
-            macro_precision = 0.0
-
-        return macro_f1, macro_recall, macro_precision
-
     def eval(self, texts, labels, choices): #choice dict
         self.model.eval()
         with torch.no_grad():
@@ -149,13 +100,7 @@ class finetune_Model2:
                 max_index = score.index(max(score))
                 p[k, max_index] = 1
             
-            f1 = f1_score(true.cpu(), p.cpu(),average='weighted')
-            recall = recall_score(true.cpu(), p.cpu(),average='weighted')
-            precision = precision_score(true.cpu(), p.cpu(),average='weighted')
-            
-            accuracy = ((true == p).all(dim=1).sum().item())/p.size(0)
-            #f1, recall, precision = self.batch_macro_metric(true, p, len(choices[0]))
-        return accuracy, f1, recall, precision
+        return true, p
 
     def get_probs(self, texts, labels_list, new_labels):
 
