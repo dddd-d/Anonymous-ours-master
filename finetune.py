@@ -43,28 +43,12 @@ def get_logger(filename, verbosity=1, name=None):
     logger.addHandler(fh)
 
     return logger
-
-def evaluate(probs, labels, token):
-
-    p = torch.zeros((probs.size(0), len(LABELS)),dtype=int)
-    true_label_nums = torch.sum(labels,dim=-1)
-    for j in range(probs.size(0)):
-        indices = torch.argsort(-probs[j])[:int(true_label_nums[j])]
-        for e in range(len(token)):
-            if token[e] in indices:
-                p[j,e] = 1
-    f1 = f1_score(labels.cpu(), p.cpu(),average='weighted')
-    recall = recall_score(labels.cpu(), p.cpu(),average='weighted')
-    precision = precision_score(labels.cpu(), p.cpu(),average='weighted')
-
-    accuracy = ((labels == p).all(dim=1).sum().item())/p.size(0)
-    return accuracy, f1, recall, precision
-
-def evaluate_mask(probs, labels, token):
+    
+def get_pre_label(probs, labels, token):
     mask = torch.ones_like(probs, dtype=bool)  # 创建一个全为True的掩码
     mask[:,token] = False  # 把要保留的索引位置设置为False
     probs[mask] = -1000
-    
+
     p = torch.zeros((probs.size(0), len(LABELS)),dtype=int)
     true_label_nums = torch.sum(labels,dim=-1)
     for j in range(probs.size(0)):
@@ -72,14 +56,8 @@ def evaluate_mask(probs, labels, token):
         for e in range(len(token)):
             if token[e] in indices:
                 p[j,e] = 1
-
-    f1 = f1_score(labels.cpu(), p.cpu(),average='weighted')
-    recall = recall_score(labels.cpu(), p.cpu(),average='weighted')
-    precision = precision_score(labels.cpu(), p.cpu(),average='weighted')
+    return p
     
-    accuracy = ((labels == p).all(dim=1).sum().item())/p.size(0)
-    return accuracy, f1, recall, precision
-
 def mark_only_bias_as_trainable(model, args):
     canshu = []
     for i in args.add_bias_layer_idx:
@@ -128,16 +106,9 @@ def eval(dataloader, model, epoch, logger, type='VAL'):
     model.model.eval()
     with torch.no_grad():
         i = 0
-        f1 = 0
-        recall = 0
-        precision = 0
-        accuracy = 0
-        loss = 0 
+        all_preds = []
+        all_labels = []
 
-        f12 = 0
-        recall2 = 0
-        precision2 = 0
-        accuracy2 = 0
         for d in tqdm(dataloader,desc="{0}/EPOCH{1:02d}".format(type, epoch+1)):
             i += 1
             texts = d['texts']
@@ -145,26 +116,18 @@ def eval(dataloader, model, epoch, logger, type='VAL'):
 
             probs, token = model.eval(texts)
           
-            A, F, R, P = evaluate(probs, labels, token)
-            A2, F2, R2, P2 = evaluate_mask(probs, labels, token)
+            pre_label = get_pre_label(probs, labels, token)
+            all_preds.extend(pre_label.tolist())
+            all_labels.extend(labels.cpu().tolist())
             
             del probs
             torch.cuda.empty_cache()
-            
-            f1 += F
-            recall += R
-            precision += P
-            accuracy += A
-
-            f12 += F2
-            recall2 += R2
-            precision2 += P2
-            accuracy2 += A2
-            print('TEST_{}'.format(i), accuracy/i, f1/i)
-            print('TEST_mask{}'.format(i), accuracy2/i, f12/i)
-        logger.info('##{0}## epoch: {1:02d}, avg_loss: {2:.4f}, avg_accuracy: {3:.4f}, avg_f1: {4:.4f}, avg_recall: {5:.4f}, avg_precision: {6:.4f}'.format(type, epoch+1, loss/i, accuracy/i ,f1/i, recall/i, precision/i))
-        logger.info('##{0}_mask## epoch: {1:02d}, avg_loss: {2:.4f}, avg_accuracy: {3:.4f}, avg_f1: {4:.4f}, avg_recall: {5:.4f}, avg_precision: {6:.4f}'.format(type, epoch+1, loss/i, accuracy2/i ,f12/i, recall2/i, precision2/i))
-        return f12/i
+        f1 = f1_score(all_labels, all_preds,average='weighted')
+        recall = recall_score(all_labels, all_preds,average='weighted')
+        precision = precision_score(all_labels, all_preds,average='weighted')
+        print('##{0}_mask## epoch: {1:02d}, f1: {2:.4f}, recall: {3:.4f}, precision: {4:.4f}'.format(type, epoch+1, f1, recall, precision))
+        logger.info('##{0}_mask## epoch: {1:02d}, f1: {2:.4f}, recall: {3:.4f}, precision: {4:.4f}'.format(type, epoch+1, f1, recall, precision))
+        return f1
 
 # 固定随机种子函数
 def set_seed(seed):
